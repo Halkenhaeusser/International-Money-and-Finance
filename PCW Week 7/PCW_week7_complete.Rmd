@@ -1,0 +1,172 @@
+---
+title: "PCW on the Fisher Test"
+output: html_notebook
+---
+
+THIS PRE-CLASS WORK IS THE START TO REPLICATING MISHKIN (1992) ON THE FISHER TEST: https://www.nber.org/system/files/working_papers/w3632/w3632.pdf 
+
+COMPLETE THE TASKS BY ADDING THE RELEVANT CODE AND ANSWERING THE QUESTIONS. 
+BRING THE YOUR GRAPHS, REGRESSION TABLES, AND ANSWERS TO THE QUESTIONS TO CLASS TO DISCUSS THEM WITH YOUR PEERS. 
+
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+#Packages
+```{r}
+library(tidyverse)
+library(dplyr)
+library(tseries)
+library(data.table)
+library(stargazer)
+```
+
+# Data
+## Interest Rate Data 
+Data Source in SDW: https://sdw.ecb.europa.eu/quickview.do?SERIES_KEY=165.YC.B.U2.EUR.4F.G_N_A.SV_C_YM.SR_1Y 
+Read in the interest rate data. 
+Do you think the way we impute missing data is correct? Should it be changed? If so how?
+```{r}
+
+#Data Source in SDW: https://sdw.ecb.europa.eu/quickview.do?SERIES_KEY=165.YC.B.U2.EUR.4F.G_N_A.SV_C_YM.SR_1Y
+#read in the data on the EU yield rates. 
+data_yields <- read.csv("/Users/johannes/Desktop/Minerva/International Money & Finance/PCW Week 7/eu_yields.csv")
+
+#convert to dates
+data_yields$Date <-as.Date(data_yields$Date, format = "%d.%m.%y")
+
+## We have to impute interest rate values during the weekends
+
+#create a dataframe with all dates between the start and end of the yield data
+daily_vec <- seq(as.Date('2004-09-06'), as.Date('2021-02-11'), by = "day")
+dateframe <- data.frame(daily_vec)
+
+#add this frame to the existing yield frame to make missing values explicit
+data_yields <- merge(data_yields, dateframe, by.x = 'Date', by.y = 'daily_vec', all.x = T, all.y = T)
+#fill the missing values with the value one row above. 
+data_yields <- data_yields %>% 
+  fill(Percent.per.annum, .direction = 'up')
+```
+```{r}
+#check out the yields data. You can comment this out afterwards so it does not keep popping up. 
+View(data_yields)
+```
+
+## Inflation Data
+Read in the inflation data
+Task 1: Fill in the equation for the inflation rate.
+
+```{r}
+data_inflation <- read.csv("/Users/johannes/Desktop/Minerva/International Money & Finance/PCW Week 7/cpi_eu.csv")
+
+#convert data to dates for merging
+data_inflation$DATE <-as.Date(data_inflation$DATE, format = "%Y-%m-%d")
+#rename the columns
+colnames(data_inflation) <- c('date', 'cpi')
+
+#calcualte the rate of inflation from the CPI
+data_inflation$inf <- ((data_inflation$cpi - lag(data_inflation$cpi, 12))/lag(data_inflation$cpi, 12))*100
+```
+
+## Full Data Set
+```{r}
+#merge the datasets on the date
+tutorial_data <- merge(data_inflation, data_yields, by.x = 'date', by.y = "Date", all.x = T)
+colnames(tutorial_data) <- c('date', 'cpi','inflation','interest')
+
+tutorial_data$future_inf <- shift(tutorial_data$inflation, n = -12)
+```
+
+# Plotting
+Task 2: Plot inflation and interest rate in one or multiple graph to compare their trends. 
+You can transform, subset, or change the data however you please. 
+Can you observe a relationship? 
+
+Tip: Use the melt function to convert data into a format that lets you plot multiple series in one graph.
+```{r}
+#It helps to use a converted format format when trying to plot multiple series. 
+df <- melt(tutorial_data[c('date', 'inflation', 'interest', 'future_inf')], id.vars="date")
+
+#plot the three different series in one graph
+plot1 <- ggplot(data = subset(df, date > '2004-01-01'), 
+                aes(x = date, 
+                    y = value,
+                    group = variable)) +
+  geom_line(aes(color = variable)) +
+  labs(x = 'Time', y = 'Percent')
+#call on the plot
+plot1
+
+```
+
+
+# Modeling
+Task 3: Run a couple of regressions modeliling the relationship between future inflation rates and interest rates using different time frames and using an appropriate lag. 
+I have started you off with a regression using a 12 month lag on the whole data set. 
+
+- Do we observe the Fisher Effect? 
+Are these result similar to the ones in the Mishkin paper?
+
+- Are there time periods where the coefficient becomes more or less significant?
+- Why would this be? 
+- What could events be that have lead to the change in interest rates or inflation? 
+
+Tip: 
+
+```{r}
+full_reg <- lm(inflation~ lag(interest,12), data = tutorial_data)
+
+# Add more regressions here:
+reg_pre08 <- lm(inflation~ lag(interest,12), data = subset(tutorial_data, date < '2008-09-01'))
+reg_post08 <- lm(inflation~ lag(interest,12), data = subset(tutorial_data, date > '2008-09-01'))
+reg_post15 <- lm(inflation~ lag(interest,12), data = subset(tutorial_data, date > '2015-01-01'))
+reg_negative <- lm(inflation~ lag(interest,12), data = subset(tutorial_data, interest < 0))
+
+
+#compare the regression outputs using the stargazer package:
+stargazer(full_reg,
+          reg_pre08,
+          reg_post08,
+          reg_post15,
+          reg_negative,
+          column.labels = c("full", 'Pre08', "Post08", "Post15", "NegativeInt"),
+          title = 'Results Panel', 
+          align = T,
+          type = 'text')
+
+```
+
+# Time Series Checks
+
+Task 4: Using the adf.test() and the acf() functions, check on for unit roots and autoregression. 
+What do the results tell us about the robustness of our results?
+
+You can check the Mishkin paper on how to interpret the adf.test() or check here: https://nwfsc-timeseries.github.io/atsa-labs/sec-boxjenkins-aug-dickey-fuller.html. 
+If you don't remember how to interpret correlograms a reminder can be found here: https://nwfsc-timeseries.github.io/atsa-labs/sec-tslab-correlation-within-and-among-time-series.html
+
+```{r}
+#subset the data so no NAs are included anymore
+completed_dataset <- na.exclude(tutorial_data)
+
+#conduct the augmented Dickey Fuller tests for the two variables
+adf.test(completed_dataset$interest)
+adf.test(completed_dataset$inflation)
+```
+```{r}
+
+#check for autoregression
+acf(completed_dataset$interest)
+acf(completed_dataset$inflation)
+
+````
+
+# Extensions
+
+Task 5: 
+- Based on our current results, is there evidence for the Fisher Test?
+- If you had the econometrics knowledge, coding, time, and data how would you continue this analysis to make a full replication of Mishkin (1992)
+- Come up with one other variable to compare to either inflation or interest rates that may be insightful to the relationship. 
+  - why did you choose this variable? 
+  
+  OPTIONAL: Code up your extensions. 
