@@ -1,0 +1,155 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
+```{r Libs}
+
+library(tidyverse)
+library(dplyr)
+library(tseries)
+library(data.table)
+library(stargazer)
+library(AER)
+```
+
+
+
+Lets load the data from our files. 
+
+You will have to change the file name in your code. (!!!)
+
+Please check out the resultant dataframe. 
+Do you notice a problem with the data? 
+```{r Import data}
+
+country_panel_raw <- 
+  read.csv('/Users/johannes/Downloads/Data_Extract_From_World_Development_Indicators (10)/3f473c3e-2966-4c5d-ad4d-d550f1d134a4_Data.csv')
+
+colnames(country_panel_raw) <- c("Country",                                                             
+ "Year",                                                                     
+ "GNI",                                                  
+ "Gini",                                         
+ "FDI",                        
+ "FDI_netinflow",                
+ "TransactionCost",
+ "RemittancesGDP",                               
+  "Remittances",                             
+"LiteracyRate",               
+"CompulsoryEducation",                                   
+"GNIpc",                                  
+"Population")
+
+
+#Total remittances do not captivate the actual level of remittances that arrive at households 
+country_panel_raw['RemittancesPC'] <- country_panel_raw['Remittances'] / country_panel_raw['Population'] 
+
+```
+
+ 
+Right. lot's of missing data. 
+The easiest way to deal with it is to just average across multiple years. 
+This way we have less overall observations but also less fluctuation in the values.
+Look at the resultant dataframe. Are the countries appropriate for our analysis? 
+
+```{r Aggregate}
+
+#There is a lot of missing data in the panel. 
+#The easiest way to deal with it is to just average across multiple years. 
+#This way we have less overall observations but also less fluctuation in the values. 
+panel_aggregate <- aggregate(. ~Country, country_panel_raw, mean, na.action = na.omit)
+
+
+
+#calculate remittances per capita
+panel_aggregate['RemittancesPC'] <- panel_aggregate['Remittances'] / panel_aggregate['Population'] 
+
+```
+
+
+Look at the distributions. Are they good to go for an linear model? 
+Are there any correlations, patterns, or irregularities that are interesting to you? 
+
+```{r Plot distributions} 
+
+ggpairs(panel_aggregate[c("Gini","FDI_netinflow", "TransactionCost","RemittancesGDP","RemittancesPC","CompulsoryEducation","GNIpc")], title="Distributions and correlations", progress = F) 
+```
+
+Get a summary table to see what values we are dealing with. 
+
+```{r Summary Stats}
+summary(panel_aggregate[c("Gini","FDI_netinflow", "TransactionCost","RemittancesGDP","RemittancesPC","CompulsoryEducation","GNIpc")])
+```
+
+We will now run the most basic regressions. 
+Interpret the results.
+
+What do the coefficients tell you? 
+How good is the fit of the mode? 
+What does the fit of the model tell you?
+
+Do you believe the average transfer cost is a valid instrument? 
+
+Come up with three points of critique/improvements to the model.
+Come up with at least one other outcome variable you would like to see investigated. 
+
+```{r Regs}
+
+#this is a regular ols but we add country and year fixed effects to avoid that
+#there is bias from the year or the country
+OLS_panel <- plm(Gini ~ 
+                    log10(RemittancesPC) + 
+                    log10(FDI_netinflow) + 
+                    CompulsoryEducation + 
+                    log10(GNIpc) +  
+                    TransactionCost,
+                    data = country_panel_raw, index = c('Year', 'Country'))
+
+
+# an OLS with all variables for the averaged data. 
+OLS_aggregate <- lm(Gini ~ 
+                    log10(RemittancesPC) + 
+                    log10(FDI_netinflow) + 
+                    CompulsoryEducation + 
+                    log10(GNIpc) +  
+                    TransactionCost,
+                    data = panel_aggregate)
+
+
+## Instrument approach. We instrument the remittances per capita with the transaction cost and the other confounding variables
+
+IV_panel <- ivreg(Gini ~ 
+                    log10(RemittancesPC) |  
+                    TransactionCost + 
+                    log10(FDI_netinflow) + 
+                    CompulsoryEducation + 
+                    log10(GNIpc), 
+                  data = country_panel_raw, model = T )
+
+IV_aggregate <- ivreg(Gini ~ 
+                    log10(RemittancesPC) |  
+                    TransactionCost + 
+                    log10(FDI_netinflow) + 
+                    CompulsoryEducation + 
+                    log10(GNIpc),
+                    data = panel_aggregate, model = T)
+
+
+stargazer(OLS_panel, 
+          OLS_aggregate, 
+          IV_panel, 
+          IV_aggregate, type = 'text')
+```
+
+
+
